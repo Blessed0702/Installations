@@ -1,0 +1,551 @@
+````markdown
+# Mail Server Setup Guide (Ubuntu 26.04 LTS)
+
+This document describes the complete setup of the mail server running on Ubuntu using:
+
+- Postfix (SMTP)
+- Dovecot (IMAP)
+- Let's Encrypt (SSL/TLS)
+- Nginx
+- Brevo SMTP Relay (Outgoing Mail)
+- Cloudflare DNS
+
+---
+
+# Server Information
+
+| Component | Value |
+|-----------|-------|
+| Operating System | Ubuntu 26.04 LTS |
+| Mail Hostname | mail.blessed.co.zw |
+| Web Hostname | www.blessed.co.zw |
+| SMTP Server | Postfix |
+| IMAP Server | Dovecot 2.4.x |
+| SSL Provider | Let's Encrypt |
+| Outgoing Relay | Brevo |
+
+---
+
+# 1. Install Required Packages
+
+```bash
+sudo apt update
+
+sudo apt install -y \
+postfix \
+dovecot-imapd \
+dovecot-pop3d \
+certbot \
+python3-certbot-nginx \
+mailutils \
+openssl
+```
+
+---
+
+# 2. DNS Configuration
+
+## Required Records
+
+### A Record
+
+```
+mail.blessed.co.zw -> SERVER_PUBLIC_IP
+```
+
+### MX Record
+
+```
+Host: @
+
+Priority: 10
+
+Value: mail.blessed.co.zw
+```
+
+### SPF
+
+```
+v=spf1 include:spf.brevo.com ip4:SERVER_PUBLIC_IP ~all
+```
+
+### DKIM
+
+Add the DKIM record provided by Brevo.
+
+### DMARC
+
+```
+Host: _dmarc
+
+Value:
+
+v=DMARC1; p=quarantine; rua=mailto:postmaster@blessed.co.zw
+```
+
+### Reverse DNS (PTR)
+
+Configure your VPS provider's PTR record:
+
+```
+SERVER_PUBLIC_IP
+
+↓
+
+mail.blessed.co.zw
+```
+
+Verify:
+
+```bash
+host SERVER_PUBLIC_IP
+```
+
+---
+
+# 3. Obtain SSL Certificate
+
+```bash
+sudo certbot --nginx \
+-d mail.blessed.co.zw
+```
+
+Certificates are stored in:
+
+```
+/etc/letsencrypt/live/mail.blessed.co.zw/
+```
+
+Verify:
+
+```bash
+sudo certbot certificates
+```
+
+---
+
+# 4. Configure Postfix
+
+Main configuration:
+
+```
+/etc/postfix/main.cf
+```
+
+Important settings:
+
+```ini
+myhostname = mail.blessed.co.zw
+
+myorigin = /etc/mailname
+
+inet_interfaces = all
+
+inet_protocols = all
+
+mydestination =
+    localhost
+
+relayhost = [smtp-relay.brevo.com]:587
+
+smtp_sasl_auth_enable = yes
+
+smtp_sasl_password_maps =
+    static:BREVO_LOGIN:BREVO_SMTP_KEY
+
+smtp_sasl_security_options = noanonymous
+
+smtp_tls_security_level = encrypt
+
+smtp_tls_CAfile =
+    /etc/ssl/certs/ca-certificates.crt
+
+smtpd_tls_cert_file =
+    /etc/letsencrypt/live/mail.blessed.co.zw/fullchain.pem
+
+smtpd_tls_key_file =
+    /etc/letsencrypt/live/mail.blessed.co.zw/privkey.pem
+```
+
+Restart:
+
+```bash
+sudo systemctl restart postfix
+```
+
+---
+
+# 5. Configure Dovecot
+
+Configuration:
+
+```
+/etc/dovecot/
+```
+
+Verify configuration:
+
+```bash
+sudo doveconf -n
+```
+
+Authentication:
+
+```
+passdb pam
+userdb passwd
+```
+
+Mail storage:
+
+```
+Maildir
+```
+
+SSL:
+
+```
+/etc/letsencrypt/live/mail.blessed.co.zw/fullchain.pem
+
+/etc/letsencrypt/live/mail.blessed.co.zw/privkey.pem
+```
+
+Restart:
+
+```bash
+sudo systemctl restart dovecot
+```
+
+---
+
+# 6. Test Authentication
+
+```bash
+sudo doveadm auth test info
+```
+
+Expected:
+
+```
+passdb: info auth succeeded
+```
+
+---
+
+# 7. Test SMTP
+
+```bash
+echo "SMTP Test" | mail \
+-s "SMTP Test" \
+recipient@example.com
+```
+
+Check logs:
+
+```bash
+sudo tail -f /var/log/mail.log
+```
+
+---
+
+# 8. Test IMAP
+
+```bash
+openssl s_client \
+-connect mail.blessed.co.zw:993
+```
+
+Expected:
+
+```
+* OK Dovecot ready.
+```
+
+---
+
+# 9. Check Listening Ports
+
+```bash
+sudo ss -tlnp
+```
+
+Expected:
+
+| Port | Service |
+|-------|----------|
+| 25 | SMTP |
+| 587 | Submission |
+| 143 | IMAP |
+| 993 | IMAPS |
+
+---
+
+# 10. Useful Log Files
+
+Mail:
+
+```bash
+sudo tail -f /var/log/mail.log
+```
+
+Dovecot:
+
+```bash
+sudo journalctl -u dovecot -f
+```
+
+Postfix:
+
+```bash
+sudo journalctl -u postfix -f
+```
+
+---
+
+# 11. Verify Services
+
+```bash
+sudo systemctl status postfix
+
+sudo systemctl status dovecot
+```
+
+---
+
+# 12. Verify SSL Certificate
+
+```bash
+openssl s_client \
+-connect mail.blessed.co.zw:993
+```
+
+Verify expiry:
+
+```bash
+sudo certbot certificates
+```
+
+---
+
+# 13. Verify DNS
+
+```bash
+dig MX blessed.co.zw
+
+dig TXT blessed.co.zw
+
+dig TXT _dmarc.blessed.co.zw
+
+dig A mail.blessed.co.zw
+```
+
+---
+
+# 14. Common Troubleshooting
+
+## Authentication Failed
+
+Test:
+
+```bash
+sudo doveadm auth test USERNAME
+```
+
+Reset password:
+
+```bash
+sudo passwd USERNAME
+```
+
+---
+
+## Postfix Not Sending
+
+Check:
+
+```bash
+sudo postfix check
+```
+
+Logs:
+
+```bash
+sudo tail -100 /var/log/mail.log
+```
+
+---
+
+## Dovecot Won't Start
+
+Validate:
+
+```bash
+sudo doveconf
+```
+
+---
+
+## Certificate Issues
+
+Renew:
+
+```bash
+sudo certbot renew --dry-run
+```
+
+---
+
+## Firewall
+
+Allow:
+
+```bash
+sudo ufw allow 25
+
+sudo ufw allow 587
+
+sudo ufw allow 143
+
+sudo ufw allow 993
+```
+
+---
+
+# Warnings
+
+## ⚠️ Do NOT Use Snakeoil Certificates
+
+Never use:
+
+```
+/etc/ssl/private/ssl-cert-snakeoil.key
+```
+
+Always use the Let's Encrypt certificate.
+
+---
+
+## ⚠️ Protect SMTP Credentials
+
+Never commit or expose your Brevo SMTP username or SMTP key.
+
+Store them securely and restrict access to `/etc/postfix/main.cf`.
+
+---
+
+## ⚠️ Reverse DNS (PTR)
+
+Your server's public IP must resolve to:
+
+```
+mail.blessed.co.zw
+```
+
+Many mail providers reject email if the PTR record is missing or incorrect.
+
+---
+
+## ⚠️ Cloudflare Proxy
+
+Do **not** proxy mail services through Cloudflare.
+
+The DNS records used for mail (A, MX, and related records) should be **DNS Only** (grey cloud), not proxied (orange cloud).
+
+---
+
+## ⚠️ Brevo Sender Identities
+
+You can only send mail using domains or email addresses that are verified in Brevo.
+
+For example:
+
+- `info@blessed.co.zw`
+- `support@blessed.co.zw`
+
+must belong to a verified sender or an authenticated domain.
+
+---
+
+## ⚠️ Linux Users vs Mail Users
+
+Current authentication uses:
+
+```
+passdb pam
+userdb passwd
+```
+
+This means IMAP users are Linux system accounts.
+
+For production environments with many mailboxes, consider migrating to:
+
+- Virtual mailboxes
+- Virtual users
+- MariaDB or PostgreSQL backend
+
+This avoids creating Linux accounts for every email user.
+
+---
+
+## ⚠️ Keep the System Updated
+
+Regularly update packages:
+
+```bash
+sudo apt update
+
+sudo apt upgrade
+```
+
+---
+
+# Maintenance Commands
+
+Restart services:
+
+```bash
+sudo systemctl restart postfix
+sudo systemctl restart dovecot
+```
+
+Reload Postfix:
+
+```bash
+sudo postfix reload
+```
+
+Renew SSL:
+
+```bash
+sudo certbot renew
+```
+
+Verify configuration:
+
+```bash
+sudo postfix check
+
+sudo doveconf
+```
+
+---
+
+# Verification Checklist
+
+- [ ] DNS A record configured
+- [ ] MX record configured
+- [ ] SPF configured
+- [ ] DKIM configured
+- [ ] DMARC configured
+- [ ] PTR (Reverse DNS) configured
+- [ ] SSL certificate installed
+- [ ] Postfix running
+- [ ] Dovecot running
+- [ ] IMAP authentication successful
+- [ ] SMTP sending successful
+- [ ] External email received successfully
+- [ ] Certificate auto-renewal verified
+
+````
+
+This setup provides secure SMTP and IMAP services using Postfix, Dovecot, Let's Encrypt, and Brevo while following recommended practices for TLS, authentication, and DNS.
