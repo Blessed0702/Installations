@@ -1,0 +1,87 @@
+##To be used with Nginx web server to serve the Django, React, Node, NextJs and Laravel applications
+**add to all files after certificate generation
+server {
+    listen 80;
+    server_name recruiter.blessed.co.zw www.recruiter.blessed.co.zw;
+
+    return 301 https://$host$request_uri;
+}
+
+## Django Application(Django)
+server {
+
+    listen 443 ssl http2;
+
+    server_name recruiter.blessed.co.zw;
+
+    ssl_certificate     /etc/letsencrypt/live/recruiter.blessed.co.zw/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/recruiter.blessed.co.zw/privkey.pem;
+
+    location / {
+        include proxy_params;
+        proxy_pass http://unix:/run/recruiter/gunicorn.sock;
+    }
+
+    location /static/ {
+
+        alias /home/ubuntu/Documents/projects/Recruiter/staticfiles/;
+
+    }
+
+    location /media/ {
+
+        alias /home/ubuntu/Documents/projects/Recruiter/media/;
+
+    }
+
+}
+
+##Laravel Application
+
+server {
+
+    listen 443 ssl http2;
+
+    server_name sims.blessed.co.zw www.sims.blessed.co.zw;
+
+
+    root /home/ubuntu/Documents/projects/Sales-Inventory-Management-System/public;
+
+
+    index index.php index.html;
+
+
+    location / {
+
+        try_files $uri $uri/ /index.php?$query_string;
+
+    }
+
+
+    location ~ \.php$ {
+
+        include snippets/fastcgi-php.conf;
+
+        fastcgi_pass unix:/run/php/php8.5-fpm.sock;
+
+    }
+
+
+    location ~ /\.ht {
+
+        deny all;
+
+    }
+
+}\
+
+## React Application
+
+
+## NextJs Application
+
+
+## NodeJs Application
+
+
+## To enable the above configuration, you need to create a symbolic link in the /etc/nginx/sites-enabled/ directory pointing to this configuration file in /etc/nginx/sites-available/. After that, test the Nginx configuration for syntax errors using `sudo nginx -t` and reload Nginx with `sudo systemctl reload nginx`.
