@@ -1,0 +1,488 @@
+# Ubuntu Server SSH & GitHub Setup Guide
+
+This guide documents the complete process of configuring an Ubuntu server to authenticate with GitHub using SSH. Once completed, you will be able to clone, pull, and push repositories without entering your GitHub username and password.
+
+---
+
+# Prerequisites
+
+- Ubuntu Server
+- Git installed
+- GitHub account
+- Terminal access
+
+Verify Git is installed:
+
+```bash
+git --version
+```
+
+If Git is not installed:
+
+```bash
+sudo apt update
+sudo apt install git -y
+```
+
+---
+
+# 1. Generate an SSH Key
+
+Generate a new Ed25519 SSH key.
+
+```bash
+ssh-keygen -t ed25519 -C "your-email@example.com"
+```
+
+Example:
+
+```bash
+ssh-keygen -t ed25519 -C "blessedtsiga19@gmail.com"
+```
+
+When prompted:
+
+```
+Enter file in which to save the key (/home/ubuntu/.ssh/id_ed25519):
+```
+
+### Recommended
+
+Simply press **Enter** to accept the default location.
+
+### OR
+
+Specify a custom filename:
+
+```
+git_ssh
+```
+
+If using a custom filename, additional configuration is required later.
+
+---
+
+# 2. If You Saved the Key Outside ~/.ssh
+
+Create the SSH directory if it does not already exist.
+
+```bash
+mkdir -p ~/.ssh
+```
+
+Move the keys.
+
+```bash
+mv git_ssh ~/.ssh/
+mv git_ssh.pub ~/.ssh/
+```
+
+Set the correct permissions.
+
+```bash
+chmod 700 ~/.ssh
+chmod 600 ~/.ssh/git_ssh
+chmod 644 ~/.ssh/git_ssh.pub
+```
+
+---
+
+# 3. Start the SSH Agent
+
+```bash
+eval "$(ssh-agent -s)"
+```
+
+Example output:
+
+```
+Agent pid 12345
+```
+
+---
+
+# 4. Add the SSH Key
+
+If using the default key:
+
+```bash
+ssh-add ~/.ssh/id_ed25519
+```
+
+If using a custom key:
+
+```bash
+ssh-add ~/.ssh/git_ssh
+```
+
+---
+
+# 5. Configure SSH (Only Required for Custom Key Names)
+
+If your key is not named `id_ed25519`, create an SSH configuration file.
+
+```bash
+nano ~/.ssh/config
+```
+
+Add:
+
+```text
+Host github.com
+    HostName github.com
+    User git
+    IdentityFile ~/.ssh/git_ssh
+    IdentitiesOnly yes
+```
+
+Save the file and set permissions.
+
+```bash
+chmod 600 ~/.ssh/config
+```
+
+---
+
+# 6. Copy Your Public Key
+
+Display your public key.
+
+```bash
+cat ~/.ssh/git_ssh.pub
+```
+
+Or if using the default key:
+
+```bash
+cat ~/.ssh/id_ed25519.pub
+```
+
+Copy the entire output.
+
+Example:
+
+```text
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI........ blessedtsiga19@gmail.com
+```
+
+---
+
+# 7. Add the SSH Key to GitHub
+
+1. Login to GitHub
+2. Go to
+
+```
+Settings
+    └── SSH and GPG Keys
+```
+
+3. Click
+
+```
+New SSH Key
+```
+
+4. Enter
+
+Title:
+
+```
+Ubuntu Server
+```
+
+5. Paste the copied public key.
+
+6. Click
+
+```
+Add SSH Key
+```
+
+---
+
+# 8. Test the SSH Connection
+
+```bash
+ssh -T git@github.com
+```
+
+Expected output:
+
+```
+Hi <username>! You've successfully authenticated, but GitHub does not provide shell access.
+```
+
+---
+
+# 9. Clone a Repository
+
+Instead of HTTPS:
+
+```bash
+git clone https://github.com/username/repository.git
+```
+
+Use SSH:
+
+```bash
+git clone git@github.com:username/repository.git
+```
+
+Example:
+
+```bash
+git clone git@github.com:Blessed0702/Blessed_Tsiga_Portfolio.git
+```
+
+---
+
+# 10. Existing Repository
+
+If the repository already exists and was cloned using HTTPS, change it to SSH.
+
+Check the current remote.
+
+```bash
+git remote -v
+```
+
+Example:
+
+```
+origin https://github.com/user/repo.git
+```
+
+Update it.
+
+```bash
+git remote set-url origin git@github.com:user/repo.git
+```
+
+Verify.
+
+```bash
+git remote -v
+```
+
+Expected:
+
+```
+origin git@github.com:user/repo.git
+```
+
+---
+
+# 11. Configure Git Identity
+
+Set your Git username.
+
+```bash
+git config --global user.name "Your Name"
+```
+
+Set your email.
+
+```bash
+git config --global user.email "your-email@example.com"
+```
+
+Verify.
+
+```bash
+git config --global --list
+```
+
+---
+
+# 12. Common Git Commands
+
+Clone
+
+```bash
+git clone git@github.com:user/repository.git
+```
+
+Check status
+
+```bash
+git status
+```
+
+Stage all files
+
+```bash
+git add .
+```
+
+Commit
+
+```bash
+git commit -m "Initial commit"
+```
+
+Push
+
+```bash
+git push origin main
+```
+
+Pull
+
+```bash
+git pull origin main
+```
+
+---
+
+# Troubleshooting
+
+## Authentication Failed
+
+```
+remote: Invalid username or token.
+```
+
+Cause:
+
+- GitHub no longer supports password authentication over HTTPS.
+
+Solution:
+
+- Use SSH authentication.
+- Or use a Personal Access Token (PAT).
+
+---
+
+## Permission Denied (publickey)
+
+```
+Permission denied (publickey)
+```
+
+Verify the key is loaded.
+
+```bash
+ssh-add -l
+```
+
+If no identities are listed:
+
+```bash
+ssh-add ~/.ssh/git_ssh
+```
+
+or
+
+```bash
+ssh-add ~/.ssh/id_ed25519
+```
+
+---
+
+## Verify SSH Configuration
+
+```bash
+cat ~/.ssh/config
+```
+
+Example:
+
+```text
+Host github.com
+    HostName github.com
+    User git
+    IdentityFile ~/.ssh/git_ssh
+    IdentitiesOnly yes
+```
+
+---
+
+## Verify Permissions
+
+```bash
+chmod 700 ~/.ssh
+chmod 600 ~/.ssh/*
+```
+
+---
+
+## Check Git Remote
+
+```bash
+git remote -v
+```
+
+Should display:
+
+```
+origin git@github.com:user/repository.git
+```
+
+---
+
+## Test SSH Verbosely
+
+```bash
+ssh -vT git@github.com
+```
+
+This displays detailed debugging information if authentication fails.
+
+---
+
+# Useful Commands
+
+List loaded keys
+
+```bash
+ssh-add -l
+```
+
+List SSH files
+
+```bash
+ls -la ~/.ssh
+```
+
+Show public key
+
+```bash
+cat ~/.ssh/git_ssh.pub
+```
+
+or
+
+```bash
+cat ~/.ssh/id_ed25519.pub
+```
+
+Check Git version
+
+```bash
+git --version
+```
+
+Check Git configuration
+
+```bash
+git config --global --list
+```
+
+---
+
+# Security Best Practices
+
+- Never share your private SSH key (`git_ssh` or `id_ed25519`).
+- Only share the public key (`*.pub`).
+- Protect private keys with appropriate file permissions (`600`).
+- Consider using a passphrase for your SSH key.
+- Regularly review and remove unused SSH keys from your GitHub account.
+
+---
+
+# References
+
+- Git Documentation: https://git-scm.com/docs
+- GitHub SSH Documentation: https://docs.github.com/en/authentication/connecting-to-github-with-ssh
+- OpenSSH Documentation: https://www.openssh.com/manual.html
