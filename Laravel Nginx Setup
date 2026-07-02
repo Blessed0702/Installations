@@ -1,0 +1,684 @@
+# Laravel Deployment Guide (Ubuntu + Nginx + PHP-FPM + Let's Encrypt + systemd)
+
+# Overview
+
+This guide explains how to deploy a Laravel application on Ubuntu using:
+
+* Nginx
+* PHP-FPM
+* Composer
+* MySQL/PostgreSQL
+* Let's Encrypt SSL
+* Cloudflare (Optional)
+* systemd (Queue Workers & Scheduler)
+
+This guide assumes you are hosting multiple projects on the same server.
+
+---
+
+# Recommended Directory Structure
+
+```
+/home/ubuntu/Documents/projects/
+
+├── CRM/
+│   ├── app/
+│   ├── bootstrap/
+│   ├── config/
+│   ├── database/
+│   ├── public/
+│   ├── resources/
+│   ├── routes/
+│   ├── storage/
+│   ├── vendor/
+│   └── .env
+│
+├── Inventory/
+│   └── ...
+│
+└── ERP/
+    └── ...
+```
+
+Each Laravel application should have its own:
+
+* Project folder
+* .env
+* Database
+* Nginx configuration
+* Queue worker (optional)
+
+---
+
+# 1. Install Required Packages
+
+Update Ubuntu
+
+```bash
+sudo apt update
+sudo apt upgrade -y
+```
+
+Install Nginx
+
+```bash
+sudo apt install nginx
+```
+
+Install PHP
+
+Example (PHP 8.5)
+
+```bash
+sudo apt install php8.5-fpm \
+php8.5-cli \
+php8.5-mysql \
+php8.5-pgsql \
+php8.5-curl \
+php8.5-mbstring \
+php8.5-xml \
+php8.5-bcmath \
+php8.5-zip \
+php8.5-gd \
+php8.5-intl
+```
+
+Install Composer
+
+```bash
+sudo apt install composer
+```
+
+Verify versions
+
+```bash
+php -v
+composer --version
+nginx -v
+```
+
+---
+
+# 2. Install Dependencies
+
+Inside the project
+
+```bash
+cd /home/ubuntu/Documents/projects/CRM
+```
+
+Install packages
+
+```bash
+composer install --no-dev --optimize-autoloader
+```
+
+Copy environment
+
+```bash
+cp .env.example .env
+```
+
+Generate application key
+
+```bash
+php artisan key:generate
+```
+
+Configure database
+
+```bash
+nano .env
+```
+
+Run migrations
+
+```bash
+php artisan migrate
+```
+
+---
+
+# 3. Set Permissions
+
+Laravel requires write access to:
+
+* storage
+* bootstrap/cache
+
+```bash
+sudo chown -R ubuntu:www-data storage bootstrap/cache
+
+sudo chmod -R 775 storage bootstrap/cache
+```
+
+---
+
+# WARNING
+
+If permissions are incorrect you may see
+
+```
+Permission denied
+```
+
+or
+
+```
+Unable to create cache
+```
+
+or
+
+```
+The stream or file could not be opened
+```
+
+---
+
+# 4. Test Laravel
+
+Run
+
+```bash
+php artisan serve
+```
+
+Visit
+
+```
+http://127.0.0.1:8000
+```
+
+If Laravel does not work here
+
+STOP
+
+Fix Laravel before configuring Nginx.
+
+---
+
+# 5. Configure Nginx
+
+Create
+
+```bash
+sudo nano /etc/nginx/sites-available/crm
+```
+
+HTTP
+
+```nginx
+server {
+
+    listen 80;
+
+    server_name crm.example.com;
+
+    return 301 https://$host$request_uri;
+
+}
+```
+
+HTTPS
+
+```nginx
+server {
+
+    listen 443 ssl;
+    http2 on;
+
+    server_name crm.example.com;
+
+    ssl_certificate /etc/letsencrypt/live/example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
+
+    root /home/ubuntu/Documents/projects/CRM/public;
+
+    index index.php index.html;
+
+    location / {
+
+        try_files $uri $uri/ /index.php?$query_string;
+
+    }
+
+    location ~ \.php$ {
+
+        include snippets/fastcgi-php.conf;
+
+        fastcgi_pass unix:/run/php/php8.5-fpm.sock;
+
+    }
+
+    location ~ /\.ht {
+
+        deny all;
+
+    }
+
+}
+```
+
+Enable
+
+```bash
+sudo ln -s /etc/nginx/sites-available/crm /etc/nginx/sites-enabled/
+```
+
+---
+
+# 6. Test Nginx
+
+```bash
+sudo nginx -t
+```
+
+Expected
+
+```
+syntax is ok
+
+test is successful
+```
+
+Reload
+
+```bash
+sudo systemctl reload nginx
+```
+
+---
+
+# 7. Verify PHP-FPM
+
+Check
+
+```bash
+sudo systemctl status php8.5-fpm
+```
+
+Expected
+
+```
+active (running)
+```
+
+Socket
+
+```bash
+ls -l /run/php/
+```
+
+Expected
+
+```
+php8.5-fpm.sock
+```
+
+---
+
+# WARNING
+
+If the socket does not exist
+
+Check
+
+```bash
+sudo systemctl restart php8.5-fpm
+
+sudo journalctl -u php8.5-fpm
+```
+
+---
+
+# 8. Test Nginx
+
+Local
+
+```bash
+curl http://127.0.0.1
+```
+
+Host header
+
+```bash
+curl -H "Host: crm.example.com" http://127.0.0.1
+```
+
+HTTPS
+
+```bash
+curl -Ik https://127.0.0.1 -H "Host: crm.example.com"
+```
+
+---
+
+# 9. Install Certbot
+
+```bash
+sudo apt install certbot python3-certbot-nginx
+```
+
+Generate certificate
+
+```bash
+sudo certbot --nginx -d crm.example.com
+```
+
+Multiple domains
+
+```bash
+sudo certbot --nginx \
+-d blessed.co.zw \
+-d crm.blessed.co.zw \
+-d api.blessed.co.zw
+```
+
+---
+
+# 10. Firewall
+
+Ubuntu
+
+```bash
+sudo ufw allow OpenSSH
+
+sudo ufw allow 80/tcp
+
+sudo ufw allow 443/tcp
+```
+
+AWS Security Group
+
+Allow
+
+* 22
+* 80
+* 443
+
+---
+
+# 11. Queue Worker (Optional)
+
+Create
+
+```bash
+sudo nano /etc/systemd/system/crm-worker.service
+```
+
+Example
+
+```ini
+[Unit]
+Description=CRM Laravel Queue Worker
+After=network.target
+
+[Service]
+User=ubuntu
+Group=www-data
+
+WorkingDirectory=/home/ubuntu/Documents/projects/CRM
+
+ExecStart=/usr/bin/php artisan queue:work
+
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Reload
+
+```bash
+sudo systemctl daemon-reload
+
+sudo systemctl enable crm-worker
+
+sudo systemctl start crm-worker
+```
+
+---
+
+# 12. Scheduler (Optional)
+
+Edit cron
+
+```bash
+crontab -e
+```
+
+Add
+
+```cron
+* * * * * cd /home/ubuntu/Documents/projects/CRM && php artisan schedule:run >> /dev/null 2>&1
+```
+
+---
+
+# Common Problems
+
+## 403 Forbidden
+
+Usually
+
+* Wrong permissions
+* Wrong root folder
+
+Root must be
+
+```
+project/public
+```
+
+NOT
+
+```
+project/
+```
+
+---
+
+## 404 Not Found
+
+Usually
+
+* Incorrect root
+* Missing try_files directive
+
+---
+
+## Permission denied
+
+Fix
+
+```bash
+sudo chown -R ubuntu:www-data storage bootstrap/cache
+
+sudo chmod -R 775 storage bootstrap/cache
+```
+
+---
+
+## File not found
+
+Usually
+
+Wrong
+
+```
+root /project
+```
+
+Correct
+
+```
+root /project/public
+```
+
+---
+
+## PHP downloaded instead of executed
+
+PHP-FPM not configured correctly.
+
+Verify
+
+```bash
+sudo systemctl status php8.5-fpm
+```
+
+---
+
+## php8.5-fpm.sock missing
+
+Restart PHP
+
+```bash
+sudo systemctl restart php8.5-fpm
+```
+
+---
+
+## 502 Bad Gateway
+
+Usually
+
+* PHP-FPM stopped
+* Wrong socket path
+* Wrong PHP version
+
+Verify
+
+```bash
+ls /run/php/
+```
+
+---
+
+## ERR_SSL_PROTOCOL_ERROR
+
+Usually
+
+* HTTP served on HTTPS port
+* SSL certificate missing
+* Wrong certificate path
+
+---
+
+## Cloudflare 522
+
+Usually
+
+* AWS Security Group blocks port 80/443
+* UFW blocks HTTP/HTTPS
+* Nginx not listening
+* DNS incorrect
+
+---
+
+## Could not resolve host
+
+DNS record missing.
+
+Create
+
+```
+A crm -> Public IP
+```
+
+---
+
+## Certbot Unauthorized
+
+Usually
+
+* DNS incorrect
+* Cloudflare proxy issue
+* HTTP challenge cannot reach the server
+
+Verify
+
+```bash
+curl http://crm.example.com
+```
+
+before requesting a certificate.
+
+---
+
+# Useful Commands
+
+Restart Nginx
+
+```bash
+sudo systemctl restart nginx
+```
+
+Reload Nginx
+
+```bash
+sudo systemctl reload nginx
+```
+
+Restart PHP
+
+```bash
+sudo systemctl restart php8.5-fpm
+```
+
+Restart Queue Worker
+
+```bash
+sudo systemctl restart crm-worker
+```
+
+View PHP logs
+
+```bash
+sudo journalctl -u php8.5-fpm -f
+```
+
+View Queue logs
+
+```bash
+sudo journalctl -u crm-worker -f
+```
+
+Test configuration
+
+```bash
+sudo nginx -t
+```
+
+List PHP sockets
+
+```bash
+ls -l /run/php/
+```
+
+View loaded Nginx configuration
+
+```bash
+sudo nginx -T
+```
+
+---
+
+# Deployment Checklist
+
+* Laravel application works locally.
+* Dependencies installed with Composer.
+* `.env` configured.
+* Application key generated.
+* Database configured and migrations completed.
+* `storage` and `bootstrap/cache` permissions set.
+* PHP-FPM is running.
+* PHP-FPM socket exists.
+* Nginx configuration passes validation.
+* Application is accessible locally.
+* DNS points to the server.
+* SSL certificate installed.
+* Ports 80 and 443 are open in both UFW and the AWS Security Group.
+* Cloudflare SSL mode is **Full (strict)** after the certificate has been installed.
+* Queue worker and scheduler configured if the application uses queues or scheduled tasks.
