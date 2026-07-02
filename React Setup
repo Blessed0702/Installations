@@ -1,0 +1,154 @@
+# React (Vite/Create React App) Deployment Guide on Ubuntu EC2
+
+## Project Structure
+
+``` text
+/home/ubuntu/Documents/projects/
+└── react-dashboard/
+    ├── src/
+    ├── public/
+    ├── package.json
+    ├── vite.config.js
+    └── dist/ (created after build)
+```
+
+## Prerequisites
+
+``` bash
+sudo apt update
+sudo apt install nginx -y
+```
+
+Install Node.js (if not already installed):
+
+``` bash
+node -v
+npm -v
+```
+
+## Install Dependencies
+
+``` bash
+cd ~/Documents/projects/react-dashboard
+npm install
+```
+
+## Build the Application
+
+For Vite:
+
+``` bash
+npm run build
+```
+
+This creates the `dist` directory.
+
+## Configure Nginx
+
+Create a site configuration:
+
+``` bash
+sudo nano /etc/nginx/sites-available/react-dashboard
+```
+
+Example configuration:
+
+``` nginx
+server {
+    listen 3000;
+    server_name 13.51.197.121;
+
+    root /home/ubuntu/Documents/projects/react-dashboard/dist;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location ~* \.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf)$ {
+        expires 30d;
+        access_log off;
+    }
+}
+```
+
+Enable the site:
+
+``` bash
+sudo ln -s /etc/nginx/sites-available/react-dashboard /etc/nginx/sites-enabled/
+```
+
+Test configuration:
+
+``` bash
+sudo nginx -t
+```
+
+Restart Nginx:
+
+``` bash
+sudo systemctl restart nginx
+```
+
+## Open Firewall
+
+``` bash
+sudo ufw allow 3000/tcp
+```
+
+Also add an EC2 Security Group inbound rule:
+
+-   Type: Custom TCP
+-   Port: 3000
+-   Source: 0.0.0.0/0
+
+## Access the Application
+
+    http://13.51.197.121:3000
+
+## Updating the Application
+
+Whenever you make changes:
+
+``` bash
+cd ~/Documents/projects/react-dashboard
+npm install        # only if dependencies changed
+npm run build
+sudo systemctl reload nginx
+```
+
+## Troubleshooting
+
+Check Nginx status:
+
+``` bash
+sudo systemctl status nginx
+```
+
+View logs:
+
+``` bash
+sudo tail -f /var/log/nginx/error.log
+sudo tail -f /var/log/nginx/access.log
+```
+
+Check listening ports:
+
+``` bash
+sudo ss -tulpn | grep 3000
+```
+
+Validate configuration:
+
+``` bash
+sudo nginx -t
+```
+
+## Production Recommendation
+
+Once you have a domain:
+
+-   Serve React over ports **80** and **443**
+-   Use Let's Encrypt for HTTPS
+-   Avoid exposing development ports publicly
+-   Keep React as static files served by Nginx
