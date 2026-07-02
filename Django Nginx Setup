@@ -1,0 +1,685 @@
+# Django Deployment Guide (Ubuntu + Gunicorn + Nginx + systemd + SSL)
+
+## Overview
+
+This guide explains how to deploy a Django application on Ubuntu using:
+
+* Gunicorn
+* systemd
+* Nginx
+* Let's Encrypt SSL
+* Cloudflare (optional)
+
+The guide is designed for hosting **multiple Django projects** on the same server.
+
+---
+
+# Recommended Directory Structure
+
+```
+/home/ubuntu/Documents/projects/
+
+├── Recruiter/
+│   ├── manage.py
+│   ├── recruiter/
+│   ├── staticfiles/
+│   ├── media/
+│   └── venv/
+│
+├── CRM/
+│   ├── manage.py
+│   ├── crm/
+│   ├── staticfiles/
+│   ├── media/
+│   └── venv/
+│
+└── API/
+    ├── manage.py
+    ├── api/
+    ├── staticfiles/
+    ├── media/
+    └── venv/
+```
+
+Each project should have its own:
+
+* Virtual environment
+* Gunicorn service
+* Nginx configuration
+
+---
+
+# 1. Install Required Packages
+
+```
+sudo apt update
+
+sudo apt install python3-pip python3-venv nginx
+```
+
+Install Gunicorn inside your virtual environment:
+
+```
+pip install gunicorn
+```
+
+---
+
+# 2. Configure Django
+
+settings.py
+
+```
+ALLOWED_HOSTS = [
+    "recruiter.example.com",
+    "www.recruiter.example.com"
+]
+```
+
+Collect static files
+
+```
+python manage.py collectstatic
+```
+
+---
+
+# 3. Test Gunicorn
+
+Before using systemd, verify Gunicorn works.
+
+```
+cd /home/ubuntu/Documents/projects/Recruiter
+
+source venv/bin/activate
+
+gunicorn recruiter.wsgi:application --bind 127.0.0.1:8000
+```
+
+Open another terminal
+
+```
+curl http://127.0.0.1:8000
+```
+
+If this fails, do **not** continue.
+
+Fix Django first.
+
+---
+
+# 4. Create systemd Service
+
+```
+sudo nano /etc/systemd/system/recruiter.service
+```
+
+Example
+
+```
+[Unit]
+Description=Recruiter Django Application
+After=network.target
+
+[Service]
+User=ubuntu
+Group=www-data
+
+WorkingDirectory=/home/ubuntu/Documents/projects/Recruiter
+
+Environment="PATH=/home/ubuntu/Documents/projects/Recruiter/venv/bin"
+
+RuntimeDirectory=recruiter
+RuntimeDirectoryMode=0755
+
+ExecStart=/home/ubuntu/Documents/projects/Recruiter/venv/bin/gunicorn \
+    --workers 3 \
+    --timeout 120 \
+    --bind unix:/run/recruiter/gunicorn.sock \
+    recruiter.wsgi:application
+
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Reload systemd
+
+```
+sudo systemctl daemon-reload
+```
+
+Enable
+
+```
+sudo systemctl enable recruiter
+```
+
+Start
+
+```
+sudo systemctl start recruiter
+```
+
+---
+
+# 5. Verify systemd
+
+```
+sudo systemctl status recruiter
+```
+
+Expected
+
+```
+Active: active (running)
+```
+
+---
+
+# 6. Verify Socket
+
+```
+find /run -name "*.sock"
+```
+
+Example
+
+```
+/run/recruiter/gunicorn.sock
+```
+
+Check permissions
+
+```bash
+ls -ld /run/recruiter/
+ls -l /run/recruiter/
+```
+
+Check the socket directory ownership and fix it if needed:
+
+```bash
+ls -ld /run/recruiter
+ls -l /run/recruiter/
+```
+
+If it shows only `root`, update the systemd service to use a runtime directory and restart Gunicorn:
+
+```bash
+sudo nano /etc/systemd/system/recruiter.service
+```
+
+Make sure this line is present under `[Service]`:
+
+```ini
+RuntimeDirectory=recruiter
+```
+
+Then reload systemd and restart the service:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart recruiter
+sudo systemctl status recruiter
+```
+
+If the socket still does not appear, check the logs:
+
+```bash
+sudo journalctl -u recruiter -n 100 --no-pager
+```
+
+Expected
+
+```
+srw-rw---- gunicorn.sock
+```
+
+---
+
+# WARNING
+
+If the socket does not exist
+
+**DO NOT troubleshoot Nginx first.**
+
+Gunicorn failed to start.
+
+Check
+
+```
+sudo journalctl -u recruiter -n 100 --no-pager
+```
+
+---
+
+# 7. Test Gunicorn Socket
+
+```
+curl --unix-socket /run/recruiter/gunicorn.sock http://localhost/
+```
+
+Expected
+
+```
+HTTP/1.1 200 OK
+```
+
+or
+
+```
+HTTP/1.1 302 Found
+```
+
+If
+
+```
+Failed to connect
+```
+
+Gunicorn is not running.
+
+---
+
+# 8. Configure Nginx
+
+```
+sudo nano /etc/nginx/sites-available/recruiter
+```
+
+HTTP
+
+```
+server {
+
+    listen 80;
+
+    server_name recruiter.example.com;
+
+    return 301 https://$host$request_uri;
+
+}
+```
+
+HTTPS
+
+```
+server {
+
+    listen 443 ssl;
+    http2 on;
+
+    server_name recruiter.example.com;
+
+    ssl_certificate /etc/letsencrypt/live/example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
+
+    location / {
+
+        include proxy_params;
+
+        proxy_pass http://unix:/run/recruiter/gunicorn.sock;
+
+    }
+
+    location /static/ {
+
+        alias /home/ubuntu/Documents/projects/Recruiter/staticfiles/;
+
+    }
+
+    location /media/ {
+
+        alias /home/ubuntu/Documents/projects/Recruiter/media/;
+
+    }
+
+}
+```
+
+Enable
+
+```
+sudo ln -s /etc/nginx/sites-available/recruiter /etc/nginx/sites-enabled/
+```
+
+---
+
+# 9. Test Nginx
+
+```
+sudo nginx -t
+```
+
+Expected
+
+```
+syntax is ok
+
+test is successful
+```
+
+Reload
+
+```
+sudo systemctl reload nginx
+```
+
+---
+
+# 10. Verify Nginx
+
+Ports
+
+```
+sudo ss -tlnp | grep nginx
+```
+
+Expected
+
+```
+0.0.0.0:80
+
+0.0.0.0:443
+```
+
+---
+
+Test locally
+
+```
+curl -H "Host: recruiter.example.com" http://127.0.0.1
+```
+
+---
+
+Test HTTPS
+
+```
+curl -Ik https://127.0.0.1 -H "Host: recruiter.example.com"
+```
+
+---
+
+# 11. Install Certbot
+
+```
+sudo apt install certbot python3-certbot-nginx
+```
+
+Generate certificate
+
+```
+sudo certbot --nginx \
+-d recruiter.example.com
+```
+
+For multiple subdomains
+
+```
+sudo certbot --nginx \
+-d recruiter.example.com \
+-d api.example.com \
+-d crm.example.com
+```
+
+---
+
+# 12. Cloudflare
+
+Recommended SSL mode
+
+```
+Full (strict)
+```
+
+DNS
+
+```
+A recruiter -> EC2 Public IP
+```
+
+---
+
+# 13. Firewall
+
+UFW
+
+```
+sudo ufw allow OpenSSH
+
+sudo ufw allow 80/tcp
+
+sudo ufw allow 443/tcp
+
+sudo ufw enable
+```
+
+AWS Security Group
+
+Allow
+
+* 22
+* 80
+* 443
+
+---
+
+# Common Problems
+
+## Socket does not exist
+
+Cause
+
+Gunicorn failed.
+
+Check
+
+```
+sudo journalctl -u recruiter
+```
+
+---
+
+## Permission denied creating socket
+
+Do **not** bind directly to
+
+```
+/run/recruiter.sock
+```
+
+Use
+
+```
+RuntimeDirectory=recruiter
+```
+
+and
+
+```
+/run/recruiter/gunicorn.sock
+```
+
+---
+
+## curl --unix-socket fails
+
+Gunicorn is not running.
+
+Verify
+
+```
+sudo systemctl status recruiter
+```
+
+---
+
+## 502 Bad Gateway
+
+Usually means
+
+* Gunicorn stopped
+* Wrong socket path
+* Nginx points to the wrong socket
+
+---
+
+## 404 Not Found
+
+Usually means
+
+* Wrong Django URL configuration
+* Wrong project module
+* Incorrect WSGI application path
+
+---
+
+## 522 Cloudflare
+
+Cloudflare cannot reach your server.
+
+Check
+
+* DNS records
+* AWS Security Group
+* UFW
+* Nginx listening on ports 80 and 443
+
+---
+
+## Could not resolve host
+
+DNS record missing.
+
+Example
+
+```
+A recruiter -> Public IP
+```
+
+---
+
+## SSL certificate file missing
+
+```
+cannot load certificate
+```
+
+Certificate has not been generated.
+
+Run
+
+```
+sudo certbot --nginx
+```
+
+---
+
+## Invalid number of arguments in http2 directive
+
+Use
+
+```
+listen 443 ssl;
+http2 on;
+```
+
+Do not use deprecated or incorrect combinations for your installed Nginx version.
+
+---
+
+## listen ... http2 directive is deprecated
+
+Use
+
+```
+listen 443 ssl;
+http2 on;
+```
+
+instead of
+
+```
+listen 443 ssl http2;
+```
+
+if your installed Nginx version recommends the newer syntax.
+
+---
+
+# Useful Commands
+
+Restart Django
+
+```
+sudo systemctl restart recruiter
+```
+
+View logs
+
+```
+sudo journalctl -u recruiter -f
+```
+
+Restart Nginx
+
+```
+sudo systemctl restart nginx
+```
+
+Reload Nginx
+
+```
+sudo systemctl reload nginx
+```
+
+Check configuration
+
+```
+sudo nginx -t
+```
+
+Find sockets
+
+```
+find /run -name "*.sock"
+```
+
+View listening ports
+
+```
+sudo ss -tlnp
+```
+
+Test socket
+
+```
+curl --unix-socket /run/recruiter/gunicorn.sock http://localhost/
+```
+
+View loaded Nginx configuration
+
+```
+sudo nginx -T
+```
+
+---
+
+# Deployment Checklist
+
+* Django application works locally.
+* Virtual environment created.
+* Gunicorn installed.
+* Gunicorn starts successfully.
+* systemd service is active.
+* Socket created.
+* Socket responds to curl.
+* Nginx configuration passes validation.
+* Nginx serves the application locally.
+* DNS points to the server.
+* SSL certificate installed.
+* Ports 80 and 443 are open in both UFW and the AWS Security Group.
+* Cloudflare (if used) is set to **Full (strict)** after the certificate is installed.
